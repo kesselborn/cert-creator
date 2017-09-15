@@ -37,7 +37,7 @@ distinguished_name = dn
 C=DE
 ST=Berlin
 OU=Secret Domain
-emailAddress=admin@
+emailAddress=admin@${main_subject}
 CN = ${main_subject}
 
 $(if [ -n "${alternative_subjects}" ]
@@ -54,7 +54,9 @@ fi
 )
 EOF
 
-openssl req -new -x509 -days 3650 -keyout ca_key.pem -out ca_cert.pem -config <(cat<<EOF
+if [ ! -e ca_cert.pem ]
+then
+  openssl req -new -x509 -days 3650 -keyout ca_key.pem -out ca_cert.pem -config <(cat<<EOF
 countryName_default = DE
 stateOrProvinceName_default = Berlin
 localityName_default = Berlin
@@ -67,31 +69,29 @@ C=DE
 ST=Berlin
 OU=Secret Domain
 emailAddress=admin@
-CN = ${main_subject}
+CN = xxx.yyy.zzz
 
 EOF
-)
+  )
 
-cat csr_details.txt
+  mkdir certs
+  echo "01" > serial
+  touch index.txt
+fi
 
-#openssl req -newkey rsa:2048 -nodes -keyout key -out csr -config csr_details.txt
-
-echo "01" > serial
-touch index.txt
 
 # Let's call openssl now by piping the newly created file in
-openssl req -set_serial 0 -new -sha256 -nodes -out ${main_subject}.csr -newkey rsa:2048 -keyout ${main_subject}.key -config csr_details.txt
+openssl req -new -sha256 -nodes -out ${main_subject}.csr -newkey rsa:2048 -keyout ${main_subject}.key -config csr_details.txt
 openssl ca -keyfile ca_key.pem -outdir . -verbose -cert ca_cert.pem -in ${main_subject}.csr -out ${main_subject}.pem -config <(cat << EOF
-
 [ca]
 default_ca = CA_default    # The default ca section
 
 [ CA_default ]
-dir      = .               # Where everything is kept
+dir      = certs            # Where everything is kept
 certs    = \$dir/certs      # Where the issued certs are kepp
 crl_dir  = \$dir/crl        # Where the issued crl are kept
-database = \$dir/index.txt  # database index file.
-serial    = \$dir/serial
+database = index.txt  # database index file.
+serial   = serial
 
 default_md  = sha1
 
@@ -110,10 +110,5 @@ organizationName  = optional
 organizationalUnitName  = optional
 commonName    = supplied
 emailAddress    = optional
-
-
 EOF
 )
-
-#r=foo
-#openssl req -x509 -nodes -days 365 -newkey rsa:2048 -keyout ${r}.key -out ${r}.crt -config csr_details.txt
