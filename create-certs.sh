@@ -1,4 +1,4 @@
-#!/bin/bash -xe
+#!/bin/bash -e
 # https://www.digitalocean.com/community/tutorials/how-to-secure-consul-with-tls-encryption-on-ubuntu-14-04
 
 main_subject=${1:?usage: $0 <domain1> [<domain2> ...] [<ip1> ...]}
@@ -27,6 +27,7 @@ base=${PWD}
 mkdir -p ${base}/ssl/CA
 chmod 0700 ${base}/ssl/CA
 
+(
 cd ${base}/ssl/CA
 echo "000a" > serial
 touch certindex
@@ -100,4 +101,11 @@ INNER_EOF
 })
 
 EOF
+)
+)
+
+(set -x;
+cp ssl/CA/ca.crt ca.pem
+cp ssl/CA/${main_subject}.crt cert.pem
+cp ssl/CA/${main_subject}.key key.pem
 )
