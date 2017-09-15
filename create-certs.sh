@@ -1,4 +1,5 @@
-#!/bin/bash
+#!/bin/bash -xe
+# https://www.digitalocean.com/community/tutorials/how-to-secure-consul-with-tls-encryption-on-ubuntu-14-04
 
 main_subject=${1:?usage: $0 <domain1> [<domain2> ...] [<ip1> ...]}
 shift
@@ -6,7 +7,6 @@ alternative_subjects=""
 
 dns_cnt=1
 ip_cnt=1
-
 while [ -n "$1" ]
 do
   if echo "$1" | grep -E "^([0-9]{1,3}\.){3}[0-9]{1,3}$"
@@ -22,27 +22,27 @@ DNS.${dns_cnt} = $1"
   shift
 done
 
-cat > csr_details.txt <<-EOF
+base=${PWD}
+
+mkdir -p ${base}/ssl/CA
+chmod 0700 ${base}/ssl/CA
+
+cd ${base}/ssl/CA
+echo "000a" > serial
+touch certindex
+
+# create ca cert
+openssl req -x509 -newkey rsa:2048 -days 3650 -nodes -out ca.crt -subj "/CN=${main_subject}/"
+
+# create wildcart cert
+openssl req -newkey rsa:2048 -nodes -out ${main_subject}.csr -keyout ${main_subject}.key -subj "/CN=${main_subject}/" -config <(cat<<EOF
+[ dn ]
 [req]
-default_bits = 2048
-prompt = no
-default_md = sha256
-$(if [ -n "${alternative_subjects}" ]
-then
-  echo "req_extensions = v3_req"
-fi)
 distinguished_name = dn
 
-[ dn ]
-C=DE
-ST=Berlin
-OU=Secret Domain
-emailAddress=admin@${main_subject}
-CN = ${main_subject}
-
-$(if [ -n "${alternative_subjects}" ]
-then
+$(test -z "${alternative_subjects}" || {
   cat<<INNER_EOF
+req_extensions = v3_req
 [ v3_req ]
 basicConstraints = CA:FALSE
 subjectAltName = @alt_names
@@ -50,65 +50,54 @@ subjectAltName = @alt_names
 [ alt_names ]
 ${alternative_subjects}
 INNER_EOF
-fi
+})
+
+EOF
 )
-EOF
 
-if [ ! -e ca_cert.pem ]
-then
-  openssl req -new -x509 -days 3650 -keyout ca_key.pem -out ca_cert.pem -config <(cat<<EOF
-countryName_default = DE
-stateOrProvinceName_default = Berlin
-localityName_default = Berlin
-distinguished_name = dn
-output_password = xxxx
-prompt = no
+openssl ca -batch -notext -extensions v3_req -in ${main_subject}.csr -out ${main_subject}.crt -config <(cat<<EOF
+[ ca ]
+default_ca = dummy_ca
 
-[ dn ]
-C=DE
-ST=Berlin
-OU=Secret Domain
-emailAddress=admin@
-CN = xxx.yyy.zzz
+[ dummy_ca ]
+unique_subject = no
+new_certs_dir = .
+certificate = ca.crt
+database = certindex
+private_key = privkey.pem
+serial = serial
+default_days = 3650
+default_md = sha1
+policy = dummy_ca_policy
+x509_extensions = dummy_ca_extensions
 
-EOF
-  )
-
-  mkdir certs
-  echo "01" > serial
-  touch index.txt
-fi
-
-
-# Let's call openssl now by piping the newly created file in
-openssl req -new -sha256 -nodes -out ${main_subject}.csr -newkey rsa:2048 -keyout ${main_subject}.key -config csr_details.txt
-openssl ca -keyfile ca_key.pem -outdir . -verbose -cert ca_cert.pem -in ${main_subject}.csr -out ${main_subject}.pem -config <(cat << EOF
-[ca]
-default_ca = CA_default    # The default ca section
-
-[ CA_default ]
-dir      = certs            # Where everything is kept
-certs    = \$dir/certs      # Where the issued certs are kepp
-crl_dir  = \$dir/crl        # Where the issued crl are kept
-database = index.txt  # database index file.
-serial   = serial
-
-default_md  = sha1
-
-default_days  = 365   # how long to certify for
-default_crl_days= 30  # how long before next CRL
-default_md  = sha1    # which md to use.
-preserve  = no        # keep passed DN ordering
-
-policy    = policy_anything
-
-[ policy_anything ]
-countryName   = optional
+[ dummy_ca_policy ]
+commonName = supplied
 stateOrProvinceName = optional
-localityName    = optional
-organizationName  = optional
-organizationalUnitName  = optional
-commonName    = supplied
-emailAddress    = optional
+countryName = optional
+emailAddress = optional
+organizationName = optional
+organizationalUnitName = optional
+
+[ dummy_ca_extensions ]
+basicConstraints = CA:false
+subjectKeyIdentifier = hash
+authorityKeyIdentifier = keyid:always
+keyUsage = digitalSignature,keyEncipherment
+extendedKeyUsage = serverAuth,clientAuth
+
+$(test -z "${alternative_subjects}" || {
+  cat<<INNER_EOF
+req_extensions = v3_req
+[ v3_req ]
+basicConstraints = CA:FALSE
+keyUsage = nonRepudiation, digitalSignature, keyEncipherment
+subjectAltName = @alt_names
+
+[ alt_names ]
+${alternative_subjects}
+INNER_EOF
+})
+
 EOF
 )
